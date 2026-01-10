@@ -1,6 +1,7 @@
 mod api;
 mod cache;
 mod clickhouse;
+mod config;
 mod device_id;
 mod state;
 mod webui;
@@ -25,36 +26,17 @@ use tracing::info;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
+    let config = config::Config::load();
+
     let device_id = device_id::get_or_create();
     let hostname = gethostname::gethostname().to_string_lossy().to_string();
 
-    let ch_url =
-        std::env::var("CLICKHOUSE_URL").unwrap_or_else(|_| "http://localhost:8123".into());
-    let ch_db =
-        std::env::var("CLICKHOUSE_DATABASE").unwrap_or_else(|_| "activitywatch".into());
-    let ch_user = std::env::var("CLICKHOUSE_USER").ok();
-    let ch_pass = std::env::var("CLICKHOUSE_PASSWORD").ok();
+    let ch_url = config.clickhouse_url();
+    let ch_db = config.clickhouse_database();
+    let ch_user = config.clickhouse_user().map(String::from);
+    let ch_pass = config.clickhouse_password().map(String::from);
 
-    let default_port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(5600);
-
-    // Parse bind addresses: comma-separated list of ip:port or just ip (uses default port)
-    let bind_addrs: Vec<String> = std::env::var("BIND_ADDR")
-        .map(|s| s.split(',').map(|a| a.trim().to_string()).collect())
-        .unwrap_or_else(|_| vec![format!("127.0.0.1:{}", default_port)]);
-
-    let bind_addrs: Vec<String> = bind_addrs
-        .into_iter()
-        .map(|addr| {
-            if addr.contains(':') {
-                addr
-            } else {
-                format!("{}:{}", addr, default_port)
-            }
-        })
-        .collect();
+    let bind_addrs = config.bind_addrs();
 
     // Cache file location
     let cache_dir = dirs::data_local_dir()
