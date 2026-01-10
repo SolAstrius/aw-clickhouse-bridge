@@ -74,6 +74,11 @@ impl Config {
     }
 
     pub fn config_path() -> Option<PathBuf> {
+        // Check AW_DATA_DIR first (for Android/restricted environments)
+        if let Ok(dir) = std::env::var("AW_DATA_DIR") {
+            return Some(PathBuf::from(dir).join("config.toml"));
+        }
+
         dirs::config_dir().map(|p| p.join("aw-clickhouse-bridge").join("config.toml"))
     }
 

@@ -39,10 +39,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind_addrs = config.bind_addrs();
 
     // Cache file location
-    let cache_dir = dirs::data_local_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("aw-clickhouse-bridge");
-    let cache_path = cache_dir.join("cache.jsonl");
+    let cache_path = std::env::var("AW_CACHE_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            let cache_dir = std::env::var("AW_DATA_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    dirs::data_local_dir()
+                        .unwrap_or_else(|| std::path::PathBuf::from("."))
+                        .join("aw-clickhouse-bridge")
+                });
+            std::fs::create_dir_all(&cache_dir).ok();
+            cache_dir.join("cache.jsonl")
+        });
 
     info!("Device ID: {}", device_id);
     info!("Hostname: {}", hostname);
@@ -119,6 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/0/settings/:key", get(api::setting_get).post(api::setting_set).delete(api::setting_delete))
         // WebUI routes
         .route("/", get(webui::index))
+        .route("/_debug/assets", get(webui::list_assets))
         .route("/favicon.ico", get(webui::favicon))
         .route("/logo.png", get(webui::logo))
         .route("/manifest.json", get(webui::manifest))

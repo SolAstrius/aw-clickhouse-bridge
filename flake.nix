@@ -14,7 +14,15 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          config.allowUnfree = true;
+        };
+
+        # Android cross-compilation toolchain (prebuilt NDK)
+        androidPkgs = pkgs.pkgsCross.aarch64-android-prebuilt;
+        androidCC = "${androidPkgs.stdenv.cc}/bin/${androidPkgs.stdenv.cc.targetPrefix}cc";
+        androidAR = "${androidPkgs.stdenv.cc.bintools}/bin/${androidPkgs.stdenv.cc.targetPrefix}ar";
 
         commonArgs = {
           pname = "aw-clickhouse-bridge";
@@ -41,8 +49,16 @@
         };
 
         devShells.default = pkgs.mkShell {
-          inputsFrom = [ self.packages.${system}.default ];
-          packages = with pkgs; [ cargo rustc rust-analyzer clippy rustfmt ];
+          # Don't include Rust - use system rustup which has Android target
+          packages = with pkgs; [ rust-analyzer ];
+
+          # Android cross-compilation environment
+          CC_aarch64_linux_android = androidCC;
+          AR_aarch64_linux_android = androidAR;
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = androidCC;
+
+          # Webui path for rust-embed (must be set before cargo runs, not via build.rs)
+          AW_WEBUI_DIR = "aw-webui/dist";
         };
       }
     );

@@ -14,6 +14,16 @@ pub async fn index() -> impl IntoResponse {
     serve_file("index.html")
 }
 
+/// Debug endpoint: list all embedded assets
+pub async fn list_assets() -> impl IntoResponse {
+    let files: Vec<_> = Assets::iter().collect();
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(format!("{{\"count\": {}, \"files\": {:?}}}", files.len(), files)))
+        .unwrap()
+}
+
 pub async fn static_file(Path(path): Path<String>) -> impl IntoResponse {
     serve_file(&path)
 }

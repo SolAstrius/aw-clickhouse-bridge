@@ -15,7 +15,7 @@ tower = "0.5"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 
 # ClickHouse
-clickhouse = { version = "0.14", features = ["time", "rustls-tls"] }
+clickhouse = { version = "0.14", features = ["time", "rustls-tls-ring", "rustls-tls-webpki-roots"] }
 
 # Serde
 serde = { version = "1", features = ["derive"] }
@@ -32,5 +32,5 @@ tracing-subscriber = "0.3"
 toml = "0.8"
 
 # Embedded webui
-rust-embed = { version = "8", features = ["interpolate-folder-path"] }
+rust-embed = { version = "8", features = ["interpolate-folder-path", "debug-embed"] }
 mime_guess = "2"
