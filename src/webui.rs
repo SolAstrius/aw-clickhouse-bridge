@@ -40,6 +40,10 @@ pub async fn fonts_file(Path(path): Path<String>) -> impl IntoResponse {
     serve_file(&format!("fonts/{}", path))
 }
 
+pub async fn assets_file(Path(path): Path<String>) -> impl IntoResponse {
+    serve_file(&format!("assets/{}", path))
+}
+
 pub async fn favicon() -> impl IntoResponse {
     serve_file("favicon.ico")
 }

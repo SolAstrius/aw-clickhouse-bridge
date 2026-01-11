@@ -136,6 +136,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/css/*path", get(webui::css_file))
         .route("/js/*path", get(webui::js_file))
         .route("/fonts/*path", get(webui::fonts_file))
+        .route("/assets/*path", get(webui::assets_file))
         .route("/static/*path", get(webui::static_file))
         // Middleware
         .layer(TraceLayer::new_for_http())
