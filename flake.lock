@@ -1,5 +1,37 @@
 {
   "nodes": {
+    "aw-media": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1716208438,
+        "narHash": "sha256-0ZtBlB10iGUkP4IIvq7MUISZ6WX47MLXM63wWIe/Y+Y=",
+        "owner": "ActivityWatch",
+        "repo": "media",
+        "rev": "a45151442aa33ed13d4fff8163bbb9b9e7636cee",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ActivityWatch",
+        "repo": "media",
+        "type": "github"
+      }
+    },
+    "aw-webui-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1767616623,
+        "narHash": "sha256-R5VMb4S2h/y00KXI+xhPeRigYBi5uYQrzU4eh9k4DhU=",
+        "owner": "ActivityWatch",
+        "repo": "aw-webui",
+        "rev": "691c57b40758da9c40b8aaf36aad08c39cc81c20",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ActivityWatch",
+        "repo": "aw-webui",
+        "type": "github"
+      }
+    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -36,6 +68,8 @@
     },
     "root": {
       "inputs": {
+        "aw-media": "aw-media",
+        "aw-webui-src": "aw-webui-src",
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs"
       }
