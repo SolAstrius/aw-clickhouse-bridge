@@ -578,6 +578,39 @@ impl ClickHouseWriter {
         Ok(())
     }
 
+    /// Get all devices with their stats
+    /// Returns: Vec<(device_id, hostname, bucket_count, event_count)>
+    pub async fn get_devices(&self) -> Result<Vec<(String, String, u64, u64)>, clickhouse::error::Error> {
+        #[derive(Row, Deserialize)]
+        struct DeviceRow {
+            device_id: String,
+            hostname: String,
+            bucket_count: u64,
+            event_count: u64,
+        }
+
+        let rows: Vec<DeviceRow> = self.client
+            .query(r#"
+                SELECT
+                    b.device_id,
+                    any(b.hostname) as hostname,
+                    count(DISTINCT b.bucket_id) as bucket_count,
+                    sum(e.cnt) as event_count
+                FROM aw_buckets b
+                LEFT JOIN (
+                    SELECT device_id, bucket_id, count() as cnt
+                    FROM aw_events FINAL
+                    GROUP BY device_id, bucket_id
+                ) e ON b.device_id = e.device_id AND b.bucket_id = e.bucket_id
+                GROUP BY b.device_id
+                ORDER BY event_count DESC
+            "#)
+            .fetch_all()
+            .await?;
+
+        Ok(rows.into_iter().map(|r| (r.device_id, r.hostname, r.bucket_count, r.event_count)).collect())
+    }
+
     /// Get bucket metadata (start/end timestamps) from events
     pub async fn get_bucket_metadata(
         &self,

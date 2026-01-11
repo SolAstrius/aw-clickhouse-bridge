@@ -126,6 +126,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/0/import", post(api::import_buckets))
         .route("/api/0/settings", get(api::settings_get))
         .route("/api/0/settings/:key", get(api::setting_get).post(api::setting_set).delete(api::setting_delete))
+        // Control API routes
+        .route("/api/0/health", get(api::health))
+        .route("/api/0/status", get(api::status))
+        .route("/api/0/flush", post(api::flush))
+        .route("/api/0/devices", get(api::devices_list))
         // WebUI routes
         .route("/", get(webui::index))
         .route("/_debug/assets", get(webui::list_assets))

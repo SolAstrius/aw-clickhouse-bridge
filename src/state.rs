@@ -162,6 +162,11 @@ impl AppState {
         }
     }
 
+    /// Get count of in-flight heartbeats
+    pub async fn in_flight_heartbeat_count(&self) -> usize {
+        self.last_heartbeat.read().await.len()
+    }
+
     /// Flush all pending events (for shutdown)
     pub async fn flush_all(&self) {
         let mut hb_map = self.last_heartbeat.write().await;

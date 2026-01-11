@@ -8,6 +8,42 @@ use axum::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
+// ============================================================================
+// Control API types
+// ============================================================================
+
+#[derive(serde::Serialize)]
+pub struct HealthResponse {
+    pub status: &'static str,
+}
+
+#[derive(serde::Serialize)]
+pub struct StatusResponse {
+    pub device_id: String,
+    pub hostname: String,
+    pub version: String,
+    pub clickhouse_connected: bool,
+    pub retry_delay_secs: u64,
+    pub pending_events: usize,
+    pub in_flight_heartbeats: usize,
+    pub buckets_cached: usize,
+}
+
+#[derive(serde::Serialize)]
+pub struct FlushResponse {
+    pub flushed: bool,
+    pub error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct DeviceInfo {
+    pub device_id: String,
+    pub hostname: String,
+    pub bucket_count: u64,
+    pub event_count: u64,
+    pub is_current: bool,
+}
+
 #[derive(serde::Deserialize)]
 pub struct HeartbeatParams {
     pub pulsetime: f64,
@@ -400,4 +436,71 @@ pub async fn import_buckets(
     let _ = state.writer.flush().await;
 
     Ok(StatusCode::OK)
+}
+
+// ============================================================================
+// Control API handlers
+// ============================================================================
+
+// GET /api/0/health
+pub async fn health() -> Json<HealthResponse> {
+    Json(HealthResponse { status: "ok" })
+}
+
+// GET /api/0/status
+pub async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
+    Json(StatusResponse {
+        device_id: state.device_id.clone(),
+        hostname: state.hostname.clone(),
+        version: format!("aw-clickhouse-bridge v{}", env!("CARGO_PKG_VERSION")),
+        clickhouse_connected: state.writer.is_connected(),
+        retry_delay_secs: state.writer.retry_delay(),
+        pending_events: state.writer.pending_count().await,
+        in_flight_heartbeats: state.in_flight_heartbeat_count().await,
+        buckets_cached: state.buckets.read().await.len(),
+    })
+}
+
+// POST /api/0/flush
+pub async fn flush(State(state): State<Arc<AppState>>) -> Json<FlushResponse> {
+    // Flush stale heartbeats first
+    state.flush_stale().await;
+    state.queue_in_progress().await;
+
+    // Then flush to ClickHouse
+    match state.writer.flush().await {
+        Ok(()) => Json(FlushResponse {
+            flushed: true,
+            error: None,
+        }),
+        Err(e) => Json(FlushResponse {
+            flushed: false,
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
+// GET /api/0/devices
+pub async fn devices_list(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<DeviceInfo>>, (StatusCode, String)> {
+    state
+        .writer
+        .get_devices()
+        .await
+        .map(|devices| {
+            Json(
+                devices
+                    .into_iter()
+                    .map(|(device_id, hostname, bucket_count, event_count)| DeviceInfo {
+                        is_current: device_id == state.device_id,
+                        device_id,
+                        hostname,
+                        bucket_count,
+                        event_count,
+                    })
+                    .collect(),
+            )
+        })
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
