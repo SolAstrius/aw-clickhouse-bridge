@@ -13,7 +13,7 @@
 
   outputs = { self, nixpkgs, flake-utils }:
     {
-      nixosModules.default = import ./module.nix;
+      homeManagerModules.default = import ./hm-module.nix;
 
       overlays.default = final: prev: {
         aw-clickhouse-bridge = final.rustPlatform.buildRustPackage {
