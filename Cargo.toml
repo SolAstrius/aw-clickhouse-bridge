@@ -3,6 +3,10 @@ name = "aw-clickhouse-bridge"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+webui = []
+
 [dependencies]
 # From aw-server-rust (git deps)
 aw-models = { git = "https://github.com/ActivityWatch/aw-server-rust" }
