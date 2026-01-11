@@ -12,6 +12,29 @@
   };
 
   outputs = { self, nixpkgs, flake-utils }:
+    {
+      nixosModules.default = import ./module.nix;
+
+      overlays.default = final: prev: {
+        aw-clickhouse-bridge = final.rustPlatform.buildRustPackage {
+          pname = "aw-clickhouse-bridge";
+          version = "0.1.0";
+          src = ./.;
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+            outputHashes = {
+              "aw-models-0.1.0" = "sha256-X9DNYAWcY0yFLwv62OGDp01AaGsDCtElkn5sAFmZkyI=";
+            };
+          };
+          meta = with final.lib; {
+            description = "ActivityWatch to ClickHouse bridge";
+            homepage = "https://github.com/SolAstrius/aw-clickhouse-bridge";
+            license = licenses.mit;
+            mainProgram = "aw-clickhouse-bridge";
+          };
+        };
+      };
+    } //
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -56,6 +79,9 @@
           CC_aarch64_linux_android = androidCC;
           AR_aarch64_linux_android = androidAR;
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = androidCC;
+
+          # 16KB page alignment for Android 15+ (required for Play Store)
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS = "-C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-z,common-page-size=16384";
 
           # Webui path for rust-embed (must be set before cargo runs, not via build.rs)
           AW_WEBUI_DIR = "aw-webui/dist";
