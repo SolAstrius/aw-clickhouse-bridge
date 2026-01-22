@@ -103,10 +103,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Queue in-progress events for real-time visibility
             state_bg.queue_in_progress().await;
 
-            // Only attempt flush if backoff allows it
+            // Only attempt flush/ping if backoff allows it
             if state_bg.writer.should_retry().await {
-                // Errors are already logged inside flush()
-                let _ = state_bg.writer.flush().await;
+                if state_bg.writer.pending_count().await > 0 {
+                    // Have events to flush
+                    let _ = state_bg.writer.flush().await;
+                } else if !state_bg.writer.is_connected() {
+                    // No events but offline - ping to test recovery
+                    let _ = state_bg.writer.ping().await;
+                }
             }
         }
     });

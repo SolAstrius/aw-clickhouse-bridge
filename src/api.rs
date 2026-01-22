@@ -104,13 +104,12 @@ pub async fn bucket_create(
             .insert("device_id".to_string(), state.device_id.clone().into());
     }
 
-    // Persist to ClickHouse
-    if let Err(e) = state.writer.save_bucket(&bucket).await {
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
-    }
+    // Cache in memory first (so events get correct bucket_type even if CH is offline)
+    state.buckets.write().await.insert(bucket_id, bucket.clone());
 
-    // Cache in memory
-    state.buckets.write().await.insert(bucket_id, bucket);
+    // Persist to ClickHouse (queues for retry if offline, always returns Ok)
+    let _ = state.writer.save_bucket(&bucket).await;
+
     Ok(StatusCode::OK)
 }
 

@@ -42,6 +42,7 @@ pub struct ClickHouseWriter {
     client: Client,
     device_id: String,
     pending: RwLock<Vec<(String, String, String, String, Event, u64)>>, // (device_id, bucket_id, bucket_type, hostname, event, version)
+    pending_buckets: RwLock<Vec<aw_models::Bucket>>, // Buckets waiting to be saved to ClickHouse
     cache: DiskCache,
     connected: AtomicBool,
     retry_delay_secs: AtomicU64,
@@ -86,6 +87,7 @@ impl ClickHouseWriter {
             client,
             device_id,
             pending: RwLock::new(Vec::new()),
+            pending_buckets: RwLock::new(Vec::new()),
             cache,
             connected: AtomicBool::new(true), // Assume connected until proven otherwise
             retry_delay_secs: AtomicU64::new(INITIAL_RETRY_DELAY_SECS),
@@ -189,8 +191,10 @@ impl ClickHouseWriter {
         Ok(buckets)
     }
 
+    /// Save bucket to ClickHouse, queueing for later if offline
+    /// Returns Ok(()) even if ClickHouse is offline (bucket is queued)
     pub async fn save_bucket(&self, bucket: &aw_models::Bucket) -> Result<(), clickhouse::error::Error> {
-        self.client
+        let result = self.client
             .query(
                 "INSERT INTO aw_buckets (device_id, bucket_id, bucket_type, client, hostname, created, data) VALUES (?, ?, ?, ?, ?, ?, ?)"
             )
@@ -202,7 +206,53 @@ impl ClickHouseWriter {
             .bind(bucket.created.unwrap_or_else(chrono::Utc::now).timestamp_micros())
             .bind(serde_json::to_string(&bucket.data).unwrap_or_default())
             .execute()
-            .await?;
+            .await;
+
+        if let Err(e) = result {
+            // Queue bucket for later save
+            warn!("Failed to save bucket {} to ClickHouse (queued for retry): {}", bucket.id, e);
+            self.pending_buckets.write().await.push(bucket.clone());
+        }
+        Ok(())
+    }
+
+    /// Flush pending buckets to ClickHouse
+    async fn flush_pending_buckets(&self) -> Result<(), clickhouse::error::Error> {
+        let buckets = {
+            let mut pending = self.pending_buckets.write().await;
+            std::mem::take(&mut *pending)
+        };
+
+        if buckets.is_empty() {
+            return Ok(());
+        }
+
+        let mut failed = Vec::new();
+        for bucket in buckets {
+            let result = self.client
+                .query(
+                    "INSERT INTO aw_buckets (device_id, bucket_id, bucket_type, client, hostname, created, data) VALUES (?, ?, ?, ?, ?, ?, ?)"
+                )
+                .bind(&self.device_id)
+                .bind(&bucket.id)
+                .bind(&bucket._type)
+                .bind(&bucket.client)
+                .bind(&bucket.hostname)
+                .bind(bucket.created.unwrap_or_else(chrono::Utc::now).timestamp_micros())
+                .bind(serde_json::to_string(&bucket.data).unwrap_or_default())
+                .execute()
+                .await;
+
+            if result.is_err() {
+                failed.push(bucket);
+            }
+        }
+
+        // Re-queue failed buckets
+        if !failed.is_empty() {
+            self.pending_buckets.write().await.extend(failed);
+        }
+
         Ok(())
     }
 
@@ -309,6 +359,36 @@ impl ClickHouseWriter {
         memory_count + disk_count
     }
 
+    /// Ping ClickHouse to test connectivity (used for recovery when no events pending)
+    pub async fn ping(&self) -> Result<(), clickhouse::error::Error> {
+        // Update last attempt time
+        *self.last_attempt.lock().await = Some(Instant::now());
+
+        // Simple query to test connectivity
+        let result = self.client.query("SELECT 1").execute().await;
+
+        match result {
+            Ok(()) => {
+                let was_offline = !self.connected.swap(true, Ordering::Relaxed);
+                self.retry_delay_secs
+                    .store(INITIAL_RETRY_DELAY_SECS, Ordering::Relaxed);
+                if was_offline {
+                    info!("ClickHouse connection recovered");
+                    // Flush any pending buckets now that we're back online
+                    let _ = self.flush_pending_buckets().await;
+                }
+                Ok(())
+            }
+            Err(e) => {
+                self.connected.store(false, Ordering::Relaxed);
+                let current_delay = self.retry_delay_secs.load(Ordering::Relaxed);
+                let new_delay = (current_delay * 2).min(MAX_RETRY_DELAY_SECS);
+                self.retry_delay_secs.store(new_delay, Ordering::Relaxed);
+                Err(e)
+            }
+        }
+    }
+
     pub async fn flush(&self) -> Result<(), clickhouse::error::Error> {
         // Take pending events from memory
         let memory_batch = {
@@ -345,6 +425,8 @@ impl ClickHouseWriter {
                 self.connected.store(true, Ordering::Relaxed);
                 self.retry_delay_secs
                     .store(INITIAL_RETRY_DELAY_SECS, Ordering::Relaxed);
+                // Also flush any pending buckets
+                let _ = self.flush_pending_buckets().await;
                 Ok(())
             }
             Err(e) => {

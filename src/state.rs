@@ -20,6 +20,7 @@ pub struct AppState {
     pub hostname: String,
     pub buckets: RwLock<HashMap<String, Bucket>>,
     last_heartbeat: RwLock<HashMap<String, PendingHeartbeat>>,
+    last_written_version: RwLock<HashMap<String, u64>>, // Track last version written to avoid duplicates
     pub writer: ClickHouseWriter,
 }
 
@@ -30,6 +31,7 @@ impl AppState {
             hostname,
             buckets: RwLock::new(buckets),
             last_heartbeat: RwLock::new(HashMap::new()),
+            last_written_version: RwLock::new(HashMap::new()),
             writer,
         }
     }
@@ -104,11 +106,20 @@ impl AppState {
 
     /// Queue in-progress events for real-time visibility in ClickHouse
     /// These are written with their current duration and version
+    /// Only queues if version has changed since last write (avoids duplicates)
     pub async fn queue_in_progress(&self) {
         let hb_map = self.last_heartbeat.read().await;
         let buckets = self.buckets.read().await;
+        let mut last_written = self.last_written_version.write().await;
 
         for (bucket_id, pending) in hb_map.iter() {
+            // Skip if version hasn't changed since last write
+            if let Some(&last_ver) = last_written.get(bucket_id) {
+                if last_ver == pending.version {
+                    continue;
+                }
+            }
+
             let (device_id, bucket_type, hostname) = buckets
                 .get(bucket_id)
                 .map(|b| {
@@ -123,6 +134,9 @@ impl AppState {
             self.writer
                 .queue(&device_id, bucket_id, &bucket_type, &hostname, pending.event.clone(), pending.version)
                 .await;
+
+            // Track that we wrote this version
+            last_written.insert(bucket_id.clone(), pending.version);
         }
     }
 
@@ -130,6 +144,7 @@ impl AppState {
     pub async fn flush_stale(&self) {
         let mut hb_map = self.last_heartbeat.write().await;
         let buckets = self.buckets.read().await;
+        let mut last_written = self.last_written_version.write().await;
         let now = Instant::now();
 
         // Find stale heartbeats - those that haven't been updated within their pulsetime
@@ -158,6 +173,9 @@ impl AppState {
                 self.writer
                     .queue(&device_id, &bucket_id, &bucket_type, &hostname, pending.event, pending.version)
                     .await;
+
+                // Clean up version tracking for this bucket
+                last_written.remove(&bucket_id);
             }
         }
     }
@@ -171,6 +189,7 @@ impl AppState {
     pub async fn flush_all(&self) {
         let mut hb_map = self.last_heartbeat.write().await;
         let buckets = self.buckets.read().await;
+        let mut last_written = self.last_written_version.write().await;
 
         for (bucket_id, pending) in hb_map.drain() {
             let (device_id, bucket_type, hostname) = buckets
@@ -188,6 +207,8 @@ impl AppState {
                 .queue(&device_id, &bucket_id, &bucket_type, &hostname, pending.event, pending.version)
                 .await;
         }
+        last_written.clear();
+        drop(last_written);
         drop(hb_map);
         drop(buckets);
 
