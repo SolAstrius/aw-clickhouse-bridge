@@ -12,6 +12,10 @@ webui = []
 aw-models = { git = "https://github.com/ActivityWatch/aw-server-rust" }
 aw-transform = { git = "https://github.com/ActivityWatch/aw-server-rust" }
 
+# Vendored from aw-server-rust and re-backed onto a two-method trait so the
+# query engine can run over ClickHouse instead of SQLite. See crates/aw-query.
+aw-query = { path = "crates/aw-query" }
+
 # HTTP
 axum = "0.8"
 tokio = { version = "1", features = ["full", "signal"] }

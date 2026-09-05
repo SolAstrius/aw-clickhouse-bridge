@@ -3,6 +3,7 @@ mod cache;
 mod clickhouse;
 mod config;
 mod cors;
+mod query;
 mod device_id;
 mod state;
 mod webui;
@@ -140,6 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/0/buckets/{id}/export", get(api::bucket_export))
         .route("/api/0/export", get(api::export_all))
         .route("/api/0/import", post(api::import_buckets))
+        .route("/api/0/query", post(query::query))
         .route("/api/0/settings", get(api::settings_get))
         .route("/api/0/settings/{key}", get(api::setting_get).post(api::setting_set).delete(api::setting_delete))
         // Control API routes
