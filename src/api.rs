@@ -66,6 +66,9 @@ pub async fn server_info(State(state): State<Arc<AppState>>) -> Json<Info> {
         hostname: state.hostname.clone(),
         version: format!("aw-clickhouse-bridge v{}", env!("CARGO_PKG_VERSION")),
         testing: false,
+        // aw-server-rust runs one instance per profile; the bridge only ever
+        // has one, so report upstream's default rather than inventing a name.
+        profile: "default".to_string(),
         device_id: state.device_id.clone(),
     })
 }
