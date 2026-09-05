@@ -35,6 +35,31 @@ pub struct CountRow {
     pub count: u64,
 }
 
+/// Largest tick value we will accept as milliseconds-since-epoch (3000-01-01).
+/// Anything larger is a legacy row (see `decode_created`).
+const MAX_PLAUSIBLE_CREATED_MS: i64 = 32_503_680_000_000;
+
+/// Decode a raw tick count read out of `aw_buckets.created`.
+///
+/// That column is `DateTime64(3, 'UTC')`, i.e. milliseconds. Bridge versions
+/// before this fix bound `timestamp_micros()` into it, so rows written by them
+/// hold a *microsecond* count in a millisecond column. ClickHouse stores the
+/// tick verbatim and only clamps when formatting, which is why those rows read
+/// back as `2299-12-31` -- the value itself survives and can be rescaled.
+///
+/// Magnitude tells the two apart unambiguously: a real millisecond timestamp
+/// stays under `MAX_PLAUSIBLE_CREATED_MS` until the year 3000, while a
+/// microsecond count passed that threshold in 1971. Legacy rows heal on their
+/// own the next time the bucket is saved.
+fn decode_created(ticks: i64) -> DateTime<Utc> {
+    let decoded = if ticks > MAX_PLAUSIBLE_CREATED_MS {
+        Utc.timestamp_micros(ticks).single()
+    } else {
+        Utc.timestamp_millis_opt(ticks).single()
+    };
+    decoded.unwrap_or_else(Utc::now)
+}
+
 const INITIAL_RETRY_DELAY_SECS: u64 = 5;
 const MAX_RETRY_DELAY_SECS: u64 = 120;
 
@@ -166,7 +191,7 @@ impl ClickHouseWriter {
         }
 
         let rows: Vec<BucketRow> = self.client
-            .query("SELECT bucket_id, bucket_type, client, hostname, toInt64(toUnixTimestamp64Micro(created)) as created, data FROM aw_buckets WHERE device_id = ?")
+            .query("SELECT bucket_id, bucket_type, client, hostname, toInt64(toUnixTimestamp64Milli(created)) as created, data FROM aw_buckets WHERE device_id = ?")
             .bind(&self.device_id)
             .fetch_all()
             .await?;
@@ -179,7 +204,7 @@ impl ClickHouseWriter {
                 _type: row.bucket_type,
                 client: row.client,
                 hostname: row.hostname,
-                created: Some(Utc.timestamp_micros(row.created).unwrap()),
+                created: Some(decode_created(row.created)),
                 data: serde_json::from_str(&row.data).unwrap_or_default(),
                 metadata: Default::default(),
                 events: None,
@@ -203,7 +228,7 @@ impl ClickHouseWriter {
             .bind(&bucket._type)
             .bind(&bucket.client)
             .bind(&bucket.hostname)
-            .bind(bucket.created.unwrap_or_else(chrono::Utc::now).timestamp_micros())
+            .bind(bucket.created.unwrap_or_else(chrono::Utc::now).timestamp_millis())
             .bind(serde_json::to_string(&bucket.data).unwrap_or_default())
             .execute()
             .await;
@@ -238,7 +263,7 @@ impl ClickHouseWriter {
                 .bind(&bucket._type)
                 .bind(&bucket.client)
                 .bind(&bucket.hostname)
-                .bind(bucket.created.unwrap_or_else(chrono::Utc::now).timestamp_micros())
+                .bind(bucket.created.unwrap_or_else(chrono::Utc::now).timestamp_millis())
                 .bind(serde_json::to_string(&bucket.data).unwrap_or_default())
                 .execute()
                 .await;
