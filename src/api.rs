@@ -49,6 +49,22 @@ pub struct HeartbeatParams {
     pub pulsetime: f64,
 }
 
+/// POST /api/0/buckets/:id/events?version=N
+///
+/// `aw_events` is a ReplacingMergeTree keyed on (device, bucket, timestamp)
+/// that keeps the highest `version`. Plain event creation writes version 1,
+/// which is right for one-shot events but makes "post now, correct later"
+/// undefined: two rows at the same key with equal versions leave the
+/// survivor to merge order. A client that re-posts an event it already
+/// posted (a provisional in-progress event superseded by the final one, as
+/// aw-watcher-claude does for long turns) passes a monotonically increasing
+/// version -- milliseconds since the epoch at post time is the convention --
+/// and the latest post wins deterministically.
+#[derive(serde::Deserialize)]
+pub struct EventsCreateParams {
+    pub version: Option<u64>,
+}
+
 #[derive(serde::Deserialize)]
 pub struct EventsGetParams {
     pub start: Option<String>,
@@ -136,9 +152,12 @@ pub async fn heartbeat(
 // POST /api/0/buckets/:id/events
 pub async fn events_create(
     Path(bucket_id): Path<String>,
+    Query(params): Query<EventsCreateParams>,
     State(state): State<Arc<AppState>>,
     Json(events): Json<Vec<Event>>,
 ) -> Json<Vec<Event>> {
+    // Version 1 unless the client asks otherwise (see EventsCreateParams).
+    let version = params.version.unwrap_or(1).max(1);
     let (device_id, bucket_type, hostname) = {
         let buckets = state.buckets.read().await;
         buckets
@@ -154,10 +173,9 @@ pub async fn events_create(
     };
 
     for event in &events {
-        // Direct event creation uses version 1 (final, no updates)
         state
             .writer
-            .queue(&device_id, &bucket_id, &bucket_type, &hostname, event.clone(), 1)
+            .queue(&device_id, &bucket_id, &bucket_type, &hostname, event.clone(), version)
             .await;
     }
     Json(events)
