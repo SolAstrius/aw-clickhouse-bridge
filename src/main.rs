@@ -93,32 +93,56 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = Arc::new(AppState::new(device_id, hostname, buckets, writer));
 
-    // Background flush task
+    // Background flush task.
+    //
+    // Woken by the writer when something is queued, rather than polling. A
+    // fixed 5s tick meant ~17k timer wakeups a day on a laptop that is idle
+    // most of them, and each one paid for a full parse of the disk cache just
+    // to ask whether it was empty. Now a busy loop still runs at ACTIVE_TICK
+    // (heartbeats need to be swept into the pending queue promptly), while an
+    // idle one sleeps up to IDLE_TICK and is woken immediately by real work.
+    const ACTIVE_TICK: Duration = Duration::from_secs(5);
+    const IDLE_TICK: Duration = Duration::from_secs(60);
+
     let state_bg = state.clone();
+    let work = state.writer.work_notifier();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        let mut tick = ACTIVE_TICK;
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = tokio::time::sleep(tick) => {}
+                _ = work.notified() => {}
+            }
+
             // Move stale heartbeats to pending queue (final version)
-            state_bg.flush_stale().await;
+            let swept = state_bg.flush_stale().await;
             // Queue in-progress events for real-time visibility
             state_bg.queue_in_progress().await;
 
+            let mut did_work = swept;
+
             // Only attempt flush/ping if backoff allows it
             if state_bg.writer.should_retry().await {
-                if state_bg.writer.pending_count().await > 0 {
-                    // Have events to flush (this also flushes pending buckets)
+                if state_bg.writer.has_pending_work().await {
+                    // Events and/or buckets to write.
                     let _ = state_bg.writer.flush().await;
-                } else if state_bg.writer.pending_bucket_count().await > 0 {
-                    // Buckets but no events: a watcher registers its bucket
-                    // once at startup and never retries, so this must not wait
-                    // for event traffic that may not come.
                     state_bg.writer.flush_buckets().await;
+                    did_work = true;
                 } else if !state_bg.writer.is_connected() {
-                    // No events but offline - ping to test recovery
+                    // Nothing queued but offline - ping to test recovery.
                     let _ = state_bg.writer.ping().await;
+                    did_work = true;
                 }
             }
+
+            // Stay responsive while there is traffic; wind down when there is
+            // not. Any queued work fires the notifier above, so backing off
+            // costs no latency.
+            tick = if did_work || state_bg.in_flight_heartbeat_count().await > 0 {
+                ACTIVE_TICK
+            } else {
+                IDLE_TICK
+            };
         }
     });
 

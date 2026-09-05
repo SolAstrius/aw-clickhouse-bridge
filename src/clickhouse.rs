@@ -5,8 +5,9 @@ use clickhouse::{Client, Row};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, Notify, RwLock};
 use tracing::{info, warn};
 
 #[derive(Row, Serialize)]
@@ -70,6 +71,7 @@ pub struct ClickHouseWriter {
     pending_buckets: RwLock<Vec<aw_models::Bucket>>, // Buckets waiting to be saved to ClickHouse
     cache: DiskCache,
     bucket_cache: BucketCache, // durable mirror of pending_buckets (see BucketCache)
+    work: Arc<Notify>,          // signalled when something is queued
 
     connected: AtomicBool,
     retry_delay_secs: AtomicU64,
@@ -125,6 +127,7 @@ impl ClickHouseWriter {
             pending_buckets: RwLock::new(recovered_buckets),
             cache,
             bucket_cache,
+            work: Arc::new(Notify::new()),
             connected: AtomicBool::new(true), // Assume connected until proven otherwise
             retry_delay_secs: AtomicU64::new(INITIAL_RETRY_DELAY_SECS),
             last_attempt: Mutex::new(None),
@@ -371,6 +374,7 @@ impl ClickHouseWriter {
         event: Event,
         version: u64,
     ) {
+        self.notify_work();
         self.pending.write().await.push((
             device_id.to_string(),
             bucket_id.to_string(),
@@ -414,6 +418,36 @@ impl ClickHouseWriter {
         let memory_count = self.pending.read().await.len();
         let disk_count = self.cache.read_all().map(|v| v.len()).unwrap_or(0);
         memory_count + disk_count
+    }
+
+    /// Is there anything to flush?
+    ///
+    /// The flush loop used to call pending_count() for this, which read the
+    /// whole disk cache and deserialized every event just to compare the
+    /// length against zero -- once every tick, for the life of the process.
+    /// With a backlog that is a full parse of megabytes of JSON several times
+    /// a minute, at precisely the moment the bridge is already behind. This
+    /// answers the same question with one stat().
+    pub async fn has_pending_work(&self) -> bool {
+        !self.pending.read().await.is_empty()
+            || !self.pending_buckets.read().await.is_empty()
+            || !self.cache.is_empty()
+    }
+
+    /// Wakes the flush loop when work is queued, so it can idle instead of poll.
+    pub fn work_notifier(&self) -> Arc<Notify> {
+        self.work.clone()
+    }
+
+    /// Wake the flush loop.
+    ///
+    /// Must be called when a heartbeat *arrives*, not only when the writer
+    /// queues one: a heartbeat lands in AppState's in-flight map and is not
+    /// queued until flush_stale() sweeps it, which only happens on a tick. If
+    /// arrival did not wake the loop, an event posted just after it went idle
+    /// would wait the whole idle interval before being written.
+    pub fn notify_work(&self) {
+        self.work.notify_one();
     }
 
     /// Buckets still waiting to reach ClickHouse.

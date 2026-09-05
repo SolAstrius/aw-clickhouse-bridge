@@ -103,9 +103,16 @@ impl DiskCache {
         Ok(())
     }
 
-    pub fn is_empty(&self) -> io::Result<bool> {
-        let metadata = std::fs::metadata(&self.path)?;
-        Ok(metadata.len() == 0)
+    /// Whether the cache holds anything, without parsing it.
+    ///
+    /// The flush loop only ever asks "is there work?", so it must not pay for
+    /// deserializing the backlog to answer. A missing file counts as empty:
+    /// the cache is created lazily on first append.
+    pub fn is_empty(&self) -> bool {
+        match std::fs::metadata(&self.path) {
+            Ok(m) => m.len() == 0,
+            Err(_) => true,
+        }
     }
 }
 

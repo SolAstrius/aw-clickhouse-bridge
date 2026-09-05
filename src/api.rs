@@ -123,6 +123,9 @@ pub async fn heartbeat(
     State(state): State<Arc<AppState>>,
     Json(event): Json<Event>,
 ) -> Json<Event> {
+    // Wake the flush loop: it may be on its long idle interval, and this
+    // heartbeat will not reach the write queue until it next runs.
+    state.writer.notify_work();
     Json(
         state
             .handle_heartbeat(&bucket_id, event, params.pulsetime)
