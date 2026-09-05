@@ -141,11 +141,16 @@ impl AppState {
     }
 
     /// Flush stale heartbeats (no update longer than their pulsetime)
-    pub async fn flush_stale(&self) {
+    /// Sweep heartbeats whose pulsetime has elapsed into the write queue.
+    ///
+    /// Returns whether anything was swept, so the flush loop can tell an
+    /// active machine from an idle one and pick its next wakeup accordingly.
+    pub async fn flush_stale(&self) -> bool {
         let mut hb_map = self.last_heartbeat.write().await;
         let buckets = self.buckets.read().await;
         let mut last_written = self.last_written_version.write().await;
         let now = Instant::now();
+        let mut swept = false;
 
         // Find stale heartbeats - those that haven't been updated within their pulsetime
         let stale: Vec<_> = hb_map
@@ -176,8 +181,10 @@ impl AppState {
 
                 // Clean up version tracking for this bucket
                 last_written.remove(&bucket_id);
+                swept = true;
             }
         }
+        swept
     }
 
     /// Get count of in-flight heartbeats
