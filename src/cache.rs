@@ -108,3 +108,76 @@ impl DiskCache {
         Ok(metadata.len() == 0)
     }
 }
+
+/// Durable store for buckets whose write to ClickHouse has not succeeded yet.
+///
+/// Events already survive a restart via `DiskCache`; buckets did not. They were
+/// held only in an in-memory `Vec`, so a bridge that was restarted while
+/// ClickHouse was unreachable dropped them silently -- and watchers call
+/// createBucket() once at startup and never retry, so the bucket row was then
+/// missing forever while that bucket's events kept arriving. `aw_buckets` ended
+/// up disagreeing with `aw_events` (buckets with thousands of events and no row).
+///
+/// Unlike the event cache this rewrites the whole file rather than appending:
+/// buckets are few, keyed by id, and repeatedly re-queueing the same handful
+/// must not grow a log without bound.
+pub struct BucketCache {
+    path: PathBuf,
+}
+
+impl BucketCache {
+    pub fn open(path: &Path) -> io::Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+        })
+    }
+
+    /// Replace the stored set. An empty slice removes the file.
+    pub fn write_all(&self, buckets: &[aw_models::Bucket]) -> io::Result<()> {
+        if buckets.is_empty() {
+            match std::fs::remove_file(&self.path) {
+                Ok(()) => return Ok(()),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+                Err(e) => return Err(e),
+            }
+        }
+
+        // Write to a sibling then rename, so a crash mid-write cannot leave a
+        // half-serialized file that read_all would silently drop entries from.
+        let tmp = self.path.with_extension("jsonl.tmp");
+        {
+            let file = File::create(&tmp)?;
+            let mut w = BufWriter::new(file);
+            for b in buckets {
+                writeln!(w, "{}", serde_json::to_string(b)?)?;
+            }
+            w.flush()?;
+            w.get_ref().sync_all()?;
+        }
+        std::fs::rename(&tmp, &self.path)
+    }
+
+    pub fn read_all(&self) -> io::Result<Vec<aw_models::Bucket>> {
+        let file = match File::open(&self.path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        };
+
+        let mut out = Vec::new();
+        for line in BufReader::new(file).lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<aw_models::Bucket>(&line) {
+                Ok(b) => out.push(b),
+                Err(e) => tracing::warn!("Skipping malformed pending-bucket line: {}", e),
+            }
+        }
+        Ok(out)
+    }
+}

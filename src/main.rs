@@ -106,8 +106,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Only attempt flush/ping if backoff allows it
             if state_bg.writer.should_retry().await {
                 if state_bg.writer.pending_count().await > 0 {
-                    // Have events to flush
+                    // Have events to flush (this also flushes pending buckets)
                     let _ = state_bg.writer.flush().await;
+                } else if state_bg.writer.pending_bucket_count().await > 0 {
+                    // Buckets but no events: a watcher registers its bucket
+                    // once at startup and never retries, so this must not wait
+                    // for event traffic that may not come.
+                    state_bg.writer.flush_buckets().await;
                 } else if !state_bg.writer.is_connected() {
                     // No events but offline - ping to test recovery
                     let _ = state_bg.writer.ping().await;

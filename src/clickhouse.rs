@@ -1,4 +1,4 @@
-use crate::cache::DiskCache;
+use crate::cache::{BucketCache, DiskCache};
 use aw_models::Event;
 use chrono::{DateTime, TimeZone, Utc};
 use clickhouse::{Client, Row};
@@ -69,6 +69,8 @@ pub struct ClickHouseWriter {
     pending: RwLock<Vec<(String, String, String, String, Event, u64)>>, // (device_id, bucket_id, bucket_type, hostname, event, version)
     pending_buckets: RwLock<Vec<aw_models::Bucket>>, // Buckets waiting to be saved to ClickHouse
     cache: DiskCache,
+    bucket_cache: BucketCache, // durable mirror of pending_buckets (see BucketCache)
+
     connected: AtomicBool,
     retry_delay_secs: AtomicU64,
     last_attempt: Mutex<Option<Instant>>,
@@ -99,6 +101,14 @@ impl ClickHouseWriter {
         }
 
         let cache = DiskCache::open(cache_path)?;
+        let bucket_cache = BucketCache::open(&cache_path.with_file_name("pending-buckets.jsonl"))?;
+        let recovered_buckets = bucket_cache.read_all().unwrap_or_default();
+        if !recovered_buckets.is_empty() {
+            info!(
+                "Recovered {} unsaved bucket(s) from previous run",
+                recovered_buckets.len()
+            );
+        }
 
         // Log if there are cached events from a previous run
         match cache.read_all() {
@@ -112,8 +122,9 @@ impl ClickHouseWriter {
             client,
             device_id,
             pending: RwLock::new(Vec::new()),
-            pending_buckets: RwLock::new(Vec::new()),
+            pending_buckets: RwLock::new(recovered_buckets),
             cache,
+            bucket_cache,
             connected: AtomicBool::new(true), // Assume connected until proven otherwise
             retry_delay_secs: AtomicU64::new(INITIAL_RETRY_DELAY_SECS),
             last_attempt: Mutex::new(None),
@@ -234,11 +245,26 @@ impl ClickHouseWriter {
             .await;
 
         if let Err(e) = result {
-            // Queue bucket for later save
+            // Queue bucket for later save, and mirror the queue to disk so a
+            // restart before ClickHouse comes back does not lose it. Watchers
+            // only call createBucket() at startup, so a dropped bucket is never
+            // retried by the client.
             warn!("Failed to save bucket {} to ClickHouse (queued for retry): {}", bucket.id, e);
-            self.pending_buckets.write().await.push(bucket.clone());
+            let mut pending = self.pending_buckets.write().await;
+            pending.retain(|b| b.id != bucket.id);
+            pending.push(bucket.clone());
+            self.persist_pending_buckets(&pending);
         }
         Ok(())
+    }
+
+    /// Mirror the in-memory pending-bucket queue to disk. Best-effort: a
+    /// failure here must not break the caller, which still holds the queue in
+    /// memory and will retry on the next flush.
+    fn persist_pending_buckets(&self, pending: &[aw_models::Bucket]) {
+        if let Err(e) = self.bucket_cache.write_all(pending) {
+            warn!("Failed to persist pending buckets: {}", e);
+        }
     }
 
     /// Flush pending buckets to ClickHouse
@@ -273,9 +299,15 @@ impl ClickHouseWriter {
             }
         }
 
-        // Re-queue failed buckets
-        if !failed.is_empty() {
-            self.pending_buckets.write().await.extend(failed);
+        // Re-queue failed buckets, and rewrite the disk mirror either way: on
+        // success it must be emptied so a later restart does not resurrect
+        // buckets that are already in ClickHouse.
+        {
+            let mut pending = self.pending_buckets.write().await;
+            if !failed.is_empty() {
+                pending.extend(failed);
+            }
+            self.persist_pending_buckets(&pending);
         }
 
         Ok(())
@@ -382,6 +414,20 @@ impl ClickHouseWriter {
         let memory_count = self.pending.read().await.len();
         let disk_count = self.cache.read_all().map(|v| v.len()).unwrap_or(0);
         memory_count + disk_count
+    }
+
+    /// Buckets still waiting to reach ClickHouse.
+    ///
+    /// Counted separately from events by the flush loop: a watcher registers
+    /// its bucket once and may then send nothing for a long time, so a bucket
+    /// must not depend on an event being queued to get written.
+    pub async fn pending_bucket_count(&self) -> usize {
+        self.pending_buckets.read().await.len()
+    }
+
+    /// Write out queued buckets without requiring queued events.
+    pub async fn flush_buckets(&self) {
+        let _ = self.flush_pending_buckets().await;
     }
 
     /// Ping ClickHouse to test connectivity (used for recovery when no events pending)
