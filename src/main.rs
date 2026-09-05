@@ -118,7 +118,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         // API routes
-        .route("/api/0/", get(api::server_info))
+        //
+        // Registered WITHOUT a trailing slash on purpose. normalize_path (see
+        // below) rewrites the URI before routing, so a request for "/api/0/"
+        // arrives here as "/api/0"; a route spelled "/api/0/" can therefore
+        // never match and returns 404. This is ActivityWatch's server-info
+        // endpoint, which is what clients probe first, so it must answer.
+        .route("/api/0", get(api::server_info))
         .route("/api/0/info", get(api::server_info_alt))
         .route("/api/0/buckets", get(api::buckets_get))
         .route("/api/0/buckets/{id}", get(api::bucket_get).post(api::bucket_create).delete(api::bucket_delete))
