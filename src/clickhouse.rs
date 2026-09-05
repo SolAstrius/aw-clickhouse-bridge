@@ -87,9 +87,9 @@ impl ClickHouseWriter {
             .with_url(url)
             .with_database(database)
             // JSON column support (ClickHouse 24.10+)
-            .with_option("allow_experimental_json_type", "1")
-            .with_option("input_format_binary_read_json_as_string", "1")
-            .with_option("output_format_binary_write_json_as_string", "1");
+            .with_setting("allow_experimental_json_type", "1")
+            .with_setting("input_format_binary_read_json_as_string", "1")
+            .with_setting("output_format_binary_write_json_as_string", "1");
 
         if let Some(u) = user {
             client = client.with_user(u);

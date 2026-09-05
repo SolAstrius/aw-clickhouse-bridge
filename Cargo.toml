@@ -13,13 +13,13 @@ aw-models = { git = "https://github.com/ActivityWatch/aw-server-rust" }
 aw-transform = { git = "https://github.com/ActivityWatch/aw-server-rust" }
 
 # HTTP
-axum = "0.7"
+axum = "0.8"
 tokio = { version = "1", features = ["full", "signal"] }
 tower = "0.5"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower-http = { version = "0.7", features = ["cors", "trace"] }
 
 # ClickHouse
-clickhouse = { version = "0.14", features = ["time", "rustls-tls-ring", "rustls-tls-webpki-roots"] }
+clickhouse = { version = "0.15", features = ["time", "rustls-tls-ring", "rustls-tls-webpki-roots"] }
 
 # Serde
 serde = { version = "1", features = ["derive"] }
@@ -28,12 +28,12 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Utils
 uuid = { version = "1", features = ["v4"] }
-gethostname = "0.5"
-directories = "5"
-dirs = "5"
+gethostname = "1"
+directories = "6"
+dirs = "6"
 tracing = "0.1"
 tracing-subscriber = "0.3"
-toml = "0.8"
+toml = "1"
 
 # Embedded webui
 rust-embed = { version = "8", features = ["interpolate-folder-path", "debug-embed"] }
