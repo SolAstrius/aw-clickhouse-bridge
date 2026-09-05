@@ -58,7 +58,7 @@
           cargoLock = {
             lockFile = ./Cargo.lock;
             outputHashes = {
-              "aw-models-0.1.0" = "sha256-X9DNYAWcY0yFLwv62OGDp01AaGsDCtElkn5sAFmZkyI=";
+              "aw-models-0.1.0" = "sha256-DWsQXTEiTFIlJHO2gAbAATvDW8FJzJgoar2rK6+hZTk=";
             };
           };
           env.AW_WEBUI_DIR = "${final.aw-webui}";
@@ -95,7 +95,7 @@
             cargoLock = {
               lockFile = ./Cargo.lock;
               outputHashes = {
-                "aw-models-0.1.0" = "sha256-X9DNYAWcY0yFLwv62OGDp01AaGsDCtElkn5sAFmZkyI=";
+                "aw-models-0.1.0" = "sha256-DWsQXTEiTFIlJHO2gAbAATvDW8FJzJgoar2rK6+hZTk=";
               };
             };
             env.AW_WEBUI_DIR = "${pkgs.aw-webui}";
