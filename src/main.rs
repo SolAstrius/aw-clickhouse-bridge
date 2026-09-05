@@ -2,6 +2,7 @@ mod api;
 mod cache;
 mod clickhouse;
 mod config;
+mod cors;
 mod device_id;
 mod state;
 mod webui;
@@ -18,7 +19,6 @@ use axum::extract::Request;
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::ServiceExt;
-use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
@@ -156,7 +156,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/static/{*path}", get(webui::static_file))
         // Middleware
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive())
+        // Origin allowlist. NOTE ordering: axum applies the LAST .layer() as
+        // the outermost, so extension_scope wraps the CORS layer and its 403
+        // is emitted without any Access-Control-* headers -- see cors.rs.
+        .layer(cors::cors_layer(
+            bind_addrs
+                .iter()
+                .filter_map(|a| a.rsplit(':').next()?.parse::<u16>().ok())
+                .collect(),
+        ))
+        .layer(middleware::from_fn(cors::extension_scope))
         .with_state(state.clone());
 
     // Wrap entire service with path normalization (must happen BEFORE routing)
