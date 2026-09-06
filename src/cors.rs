@@ -32,9 +32,21 @@ use axum::{
 };
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
-/// aw-watcher-web's Chrome extension. Chrome IDs are stable, so this one is
-/// pinned exactly rather than going through the wildcard.
-const CHROME_WATCHER_WEB: &str = "chrome-extension://nglaklhklhcoonedhgnpgddginnjdadi";
+/// aw-watcher-web-next, the transition-based watcher. Chromium IDs are stable,
+/// so this one is pinned exactly rather than going through the wildcard; its ID
+/// is fixed by the `key` in its manifest, so it survives unpacked reloads.
+const CHROME_WATCHER_WEB: &str = "chrome-extension://pkfpflniaddeobcgodfafhlceijhlnoj";
+
+/// The stock aw-watcher-web extension, retired 2026-09-06 and deliberately no
+/// longer allowed. Its Chromium build samples on `chrome.alarms`, which
+/// Chromium coalesces onto a ~30 s grid; delivery at 90 s overshot its own 80 s
+/// pulsetime, so nothing merged and 67% of in-browser time landed as
+/// zero-duration points. Dropping the pin stops it writing even if it gets
+/// re-enabled in the browser by accident, which matters because its bucket is
+/// `aw-watcher-web-chrome_*` and the web UI would sum it alongside the new
+/// `aw-watcher-web-helium_*` bucket rather than replacing it.
+#[allow(dead_code)]
+const CHROME_WATCHER_WEB_LEGACY: &str = "chrome-extension://nglaklhklhcoonedhgnpgddginnjdadi";
 
 /// Origins we cannot enumerate, and therefore confine in `extension_scope`.
 fn is_wildcard_extension(origin: &str) -> bool {
