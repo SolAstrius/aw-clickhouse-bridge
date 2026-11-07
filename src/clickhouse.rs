@@ -1,7 +1,7 @@
 use crate::cache::{BucketCache, DiskCache};
 use aw_models::Event;
 use chrono::{DateTime, TimeZone, Utc};
-use clickhouse::{Client, Row};
+use clickhouse::{Client, Compression, Row};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -90,6 +90,13 @@ impl ClickHouseWriter {
         let mut client = Client::default()
             .with_url(url)
             .with_database(database)
+            // The crate asks for compressed responses (`compress=1`) but can
+            // only decode LZ4, while the server picks the codec from
+            // `network_compression_method`. ClickHouse 26.10 made that ZSTD by
+            // default, so every response failed with "incorrect magic number".
+            // Pin both ends to LZ4 instead of relying on server defaults.
+            .with_compression(Compression::Lz4)
+            .with_setting("network_compression_method", "lz4")
             // JSON column support (ClickHouse 24.10+)
             .with_setting("allow_experimental_json_type", "1")
             .with_setting("input_format_binary_read_json_as_string", "1")
